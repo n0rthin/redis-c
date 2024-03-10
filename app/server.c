@@ -7,6 +7,11 @@
 #include <errno.h>
 #include <unistd.h>
 
+#define MAX 80
+
+void handle_conn(int conn_fd);
+void format_msg(char buff[MAX], char formated_msg[MAX]);
+
 int main()
 {
 	// Disable output buffering
@@ -61,10 +66,67 @@ int main()
 	else
 		printf("Client connected\n");
 
-	char msg[] = "+PONG\r\n";
-	write(conn_fd, &msg, strlen(msg));
+	handle_conn(conn_fd);
 
 	close(server_fd);
 
 	return 0;
+}
+
+void handle_conn(int conn_fd)
+{
+	char msg[] = "+PONG\r\n";
+	char buff[MAX];
+	char formated_msg[MAX];
+	int len;
+
+	for (;;)
+	{
+		memset(buff, 0, MAX);
+		memset(formated_msg, 0, MAX);
+
+		len = read(conn_fd, buff, sizeof(buff));
+		if (len == 0)
+		{
+			printf("Connection closed\n");
+			return;
+		}
+		else if (len < 0)
+		{
+			printf("Failed to read socket message: %s \n", strerror(errno));
+			return;
+		}
+
+		format_msg(buff, formated_msg);
+		printf("Received nessage: %s\n", formated_msg);
+
+		write(conn_fd, msg, strlen(msg));
+	}
+}
+
+void format_msg(char buff[MAX], char formated_msg[MAX])
+{
+	int i, j;
+	for (i = 0, j = 0; i < MAX; i++, j++)
+	{
+		if (buff[i] == '\n')
+		{
+			formated_msg[j++] = '\\';
+			formated_msg[j] = 'n';
+		}
+		else if (buff[i] == '\r')
+		{
+			formated_msg[j++] = '\\';
+			formated_msg[j] = 'r';
+		}
+		else if (buff[i] == '\t')
+		{
+			formated_msg[j++] = '\\';
+			formated_msg[j] = 't';
+		}
+		else
+		{
+			formated_msg[j] = buff[i];
+		}
+	}
 }
