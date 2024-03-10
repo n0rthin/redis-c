@@ -12,9 +12,7 @@ int main()
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
-	// Uncomment this block to pass the first stage
-
-	int server_fd, client_addr_len;
+	int server_fd, conn_fd, client_addr_len;
 	struct sockaddr_in client_addr;
 
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -23,7 +21,6 @@ int main()
 		printf("Socket creation failed: %s...\n", strerror(errno));
 		return 1;
 	}
-
 	// Since the tester restarts your program quite often, setting SO_REUSEADDR
 	// ensures that we don't run into 'Address already in use' errors
 	int reuse = 1;
@@ -55,8 +52,17 @@ int main()
 	printf("Waiting for a client to connect...\n");
 	client_addr_len = sizeof(client_addr);
 
-	accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
-	printf("Client connected\n");
+	conn_fd = accept(server_fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_len);
+	if (conn_fd < 0)
+	{
+		printf("Server accept failed: %s \n", strerror(errno));
+		return 1;
+	}
+	else
+		printf("Client connected\n");
+
+	char msg[] = "+PONG\r\n";
+	write(conn_fd, &msg, strlen(msg));
 
 	close(server_fd);
 
