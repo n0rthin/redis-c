@@ -1,6 +1,15 @@
 {
   "files.associations": {
     "unistd.h": "c",
-    "__config": "c"
+    "__config": "c",
+    "_pthread_types.h": "c",
+    "stat.h": "c",
+    "semaphore.h": "c",
+    "thread_pool.h": "c",
+    "pthread.h": "c",
+    "__mutex_base": "c",
+    "mutex": "c",
+    "stdbool.h": "c",
+    "string.h": "c"
   }
 }

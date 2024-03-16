@@ -1,24 +1,40 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <stdbool.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include "thread_pool.h"
 
-#define MAX 80
+#define MSG_MAX_LEN 80
+#define CONN_BACKLOG 5
+#define NUM_THREADS 5
 
-void handle_conn(int conn_fd);
-void format_msg(char buff[MAX], char formated_msg[MAX]);
+typedef struct
+{
+	int fd;
+	bool free;
+} Conn;
+
+void handle_conn(void *arguments);
+void format_msg(char buff[MSG_MAX_LEN], char formated_msg[MSG_MAX_LEN]);
 
 int main()
 {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
-	int server_fd, conn_fd, client_addr_len;
+	int server_fd, client_addr_len;
+	Conn conns[CONN_BACKLOG];
 	struct sockaddr_in client_addr;
+	Pool pool;
+	pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (server_fd == -1)
@@ -47,67 +63,105 @@ int main()
 		return 1;
 	}
 
-	int connection_backlog = 5;
-	if (listen(server_fd, connection_backlog) != 0)
+	if (listen(server_fd, CONN_BACKLOG) != 0)
 	{
 		printf("Listen failed: %s \n", strerror(errno));
 		return 1;
 	}
 
-	printf("Waiting for a client to connect...\n");
-	client_addr_len = sizeof(client_addr);
-
-	conn_fd = accept(server_fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_len);
-	if (conn_fd < 0)
+	if (!init_thread_pool(&pool, NUM_THREADS))
 	{
-		printf("Server accept failed: %s \n", strerror(errno));
+		printf("Failed to initialize thread pool\n");
 		return 1;
 	}
-	else
-		printf("Client connected\n");
 
-	handle_conn(conn_fd);
+	int i;
+	Conn default_conn = {-1, false};
+	client_addr_len = sizeof(client_addr);
+
+	printf("Waiting for a client to connect...\n");
+	for (;;)
+	{
+		Conn *conn = &default_conn;
+
+		for (i = 0; i < CONN_BACKLOG; i++)
+		{
+			if (conns[i].free)
+			{
+				conn = &conns[i];
+				conn->free = false;
+				break;
+			}
+		}
+
+		if (conn->fd == -1)
+			continue;
+
+		conn->fd = accept(server_fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_len);
+		if (conn->fd < 0)
+		{
+			printf("Failed to accept connection: %s \n", strerror(errno));
+			continue;
+		}
+		else
+			printf("[%d] Client connected\n", conn->fd);
+
+		if (!thread_pool_add_job(&pool, handle_conn, (void *)conn))
+		{
+			printf("[%d] Failed to add job to pool", conn->fd);
+			close(conn->fd);
+		}
+	}
 
 	close(server_fd);
+	thread_pool_destroy(&pool);
 
 	return 0;
 }
 
-void handle_conn(int conn_fd)
+void handle_conn(void *arguments)
 {
+	Conn *conn = (Conn *)arguments;
 	char msg[] = "+PONG\r\n";
-	char buff[MAX];
-	char formated_msg[MAX];
+	char buff[MSG_MAX_LEN];
+	char formated_msg[MSG_MAX_LEN];
 	int len;
 
 	for (;;)
 	{
-		memset(buff, 0, MAX);
-		memset(formated_msg, 0, MAX);
+		memset(buff, 0, MSG_MAX_LEN);
+		memset(formated_msg, 0, MSG_MAX_LEN);
 
-		len = read(conn_fd, buff, sizeof(buff));
+		len = read(conn->fd, buff, sizeof(buff));
 		if (len == 0)
 		{
-			printf("Connection closed\n");
-			return;
+			printf("[%d] Connection closed\n", conn->fd);
+			break;
 		}
 		else if (len < 0)
 		{
-			printf("Failed to read socket message: %s \n", strerror(errno));
-			return;
+			printf("[%d] Failed to read socket message: %s \n", conn->fd, strerror(errno));
+			break;
 		}
 
 		format_msg(buff, formated_msg);
-		printf("Received nessage: %s\n", formated_msg);
+		printf("[%d] Received nessage: %s\n", conn->fd, formated_msg);
 
-		write(conn_fd, msg, strlen(msg));
+		printf("[%d] Writing message: %s \n", conn->fd, msg);
+		if (write(conn->fd, msg, strlen(msg)) < 0)
+		{
+			printf("[%d] Failed to write to socket: %s \n", conn->fd, strerror(errno));
+		}
 	}
+
+	close(conn->fd);
+	conn->free = true;
 }
 
-void format_msg(char buff[MAX], char formated_msg[MAX])
+void format_msg(char buff[MSG_MAX_LEN], char formated_msg[MSG_MAX_LEN])
 {
 	int i, j;
-	for (i = 0, j = 0; i < MAX; i++, j++)
+	for (i = 0, j = 0; i < MSG_MAX_LEN; i++, j++)
 	{
 		if (buff[i] == '\n')
 		{
